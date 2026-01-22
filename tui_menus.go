@@ -68,6 +68,17 @@ func GetMenus() map[string]MenuDef {
 				{"分流模式 (仅指定网段走VPN)", "", '2', "", handleSetRouteModeSplit},
 				{"推送路由设置", "", '3', "push_routes", nil},
 				{"切换NAT开关", "", '4', "", handleToggleNAT},
+				{"DNS设置", "配置DNS劫持和服务器", '5', "dns_settings", nil},
+			},
+		},
+
+		"dns_settings": {
+			Title:  "DNS设置",
+			Parent: "route_mode",
+			Items: []MenuItem{
+				{"切换DNS劫持开关", "启用/禁用客户端DNS劫持", '1', "", handleToggleDNS},
+				{"修改DNS服务器", "设置推送给客户端的DNS", '2', "", handleSetDNSServers},
+				{"查看当前DNS配置", "显示DNS设置详情", '3', "", handleShowDNSConfig},
 			},
 		},
 

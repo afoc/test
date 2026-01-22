@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -277,6 +278,114 @@ func handleClearPushRoutes(t *TUIApp) {
 		}
 		t.showMenu("push_routes")
 	})
+}
+
+// ================ DNS设置处理 ================
+
+func handleToggleDNS(t *TUIApp) {
+	cfg, _ := t.client.ConfigGet()
+	newValue := !cfg.RedirectDNS
+	t.client.ConfigUpdate("redirect_dns", newValue)
+	if newValue {
+		t.addLog("[green]DNS劫持已启用 - 客户端将使用服务端推送的DNS")
+	} else {
+		t.addLog("[yellow]DNS劫持已禁用 - 客户端将使用本地DNS")
+	}
+	t.showMenu("dns_settings")
+}
+
+func handleSetDNSServers(t *TUIApp) {
+	cfg, _ := t.client.ConfigGet()
+	currentDNS := ""
+	if len(cfg.DNSServers) > 0 {
+		for i, dns := range cfg.DNSServers {
+			if i > 0 {
+				currentDNS += ","
+			}
+			currentDNS += dns
+		}
+	}
+	t.showInputDialog("DNS服务器 (多个用逗号分隔，如 8.8.8.8,8.8.4.4)", currentDNS, func(value string) {
+		if value == "" {
+			t.addLog("[yellow]DNS服务器不能为空")
+			t.showMenu("dns_settings")
+			return
+		}
+		// 解析DNS服务器列表
+		dnsServers := []interface{}{}
+		for _, dns := range splitByComma(value) {
+			dns = trimSpace(dns)
+			if dns != "" {
+				// 简单验证IP格式
+				if net.ParseIP(dns) != nil {
+					dnsServers = append(dnsServers, dns)
+				} else {
+					t.addLog("[red]无效的DNS服务器地址: %s", dns)
+					t.showMenu("dns_settings")
+					return
+				}
+			}
+		}
+		if len(dnsServers) == 0 {
+			t.addLog("[yellow]至少需要一个有效的DNS服务器")
+			t.showMenu("dns_settings")
+			return
+		}
+		resp, _ := t.client.ConfigUpdate("dns_servers", dnsServers)
+		if resp != nil && resp.Success {
+			t.addLog("[green]DNS服务器已设置为: %v", dnsServers)
+		} else {
+			t.addLog("[red]设置DNS服务器失败")
+		}
+		t.showMenu("dns_settings")
+	})
+}
+
+func handleShowDNSConfig(t *TUIApp) {
+	cfg, _ := t.client.ConfigGet()
+	var content strings.Builder
+	content.WriteString("当前DNS配置:\n\n")
+	
+	// DNS劫持状态
+	if cfg.RedirectDNS {
+		content.WriteString("  DNS劫持:    [green]已启用[white]\n")
+	} else {
+		content.WriteString("  DNS劫持:    [yellow]已禁用[white]\n")
+	}
+	
+	// DNS服务器列表
+	content.WriteString("\n  DNS服务器:\n")
+	if len(cfg.DNSServers) == 0 {
+		content.WriteString("    (未配置)\n")
+	} else {
+		for i, dns := range cfg.DNSServers {
+			content.WriteString(fmt.Sprintf("    %d. %s\n", i+1, dns))
+		}
+	}
+	
+	content.WriteString("\n说明:\n")
+	content.WriteString("  · 启用DNS劫持后，客户端连接VPN时会自动使用上述DNS服务器\n")
+	content.WriteString("  · 断开VPN后，客户端会恢复原有DNS配置\n")
+	
+	t.showInfoDialog("DNS配置", content.String())
+}
+
+// splitByComma 按逗号分割字符串
+func splitByComma(s string) []string {
+	result := []string{}
+	current := ""
+	for _, c := range s {
+		if c == ',' {
+			result = append(result, current)
+			current = ""
+		} else {
+			current += string(c)
+		}
+	}
+	if current != "" {
+		result = append(result, current)
+	}
+	return result
 }
 
 // ================ 证书处理 ================

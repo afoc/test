@@ -674,6 +674,29 @@ func (s *VPNService) UpdateConfig(field string, value interface{}) error {
 			}
 			s.config.PushRoutes = routes
 		}
+	case "redirect_dns":
+		if v, ok := value.(bool); ok {
+			s.config.RedirectDNS = v
+		}
+	case "dns_servers":
+		if v, ok := value.([]interface{}); ok {
+			servers := make([]string, 0, len(v))
+			for _, d := range v {
+				if ds, ok := d.(string); ok {
+					// 验证IP格式
+					if ds != "" {
+						if net.ParseIP(ds) == nil {
+							return fmt.Errorf("无效的DNS服务器地址: %s", ds)
+						}
+						servers = append(servers, ds)
+					}
+				}
+			}
+			if len(servers) == 0 {
+				return fmt.Errorf("至少需要一个DNS服务器")
+			}
+			s.config.DNSServers = servers
+		}
 	default:
 		return fmt.Errorf("未知的配置字段: %s", field)
 	}
