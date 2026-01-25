@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -86,7 +87,7 @@ func (s *VPNService) StartServer() error {
 	s.startCertAPIServer(certManager)
 
 	s.server = server
-	go server.Start()
+	go server.Start(context.Background())
 
 	return nil
 }
@@ -176,7 +177,7 @@ func (s *VPNService) ConnectClient() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.client != nil && s.client.running {
+	if s.client != nil && s.client.IsRunning() {
 		return fmt.Errorf("客户端已在运行")
 	}
 
@@ -192,7 +193,7 @@ func (s *VPNService) ConnectClient() error {
 	}
 
 	s.client = client
-	go client.Run()
+	go client.Run(context.Background())
 
 	return nil
 }
@@ -202,7 +203,7 @@ func (s *VPNService) DisconnectClient() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.client == nil || !s.client.running {
+	if s.client == nil || !s.client.IsRunning() {
 		return fmt.Errorf("客户端未连接")
 	}
 
@@ -217,7 +218,7 @@ func (s *VPNService) GetClientStatus() VPNClientStatusResponse {
 	defer s.mu.RUnlock()
 
 	resp := VPNClientStatusResponse{
-		Connected:     s.client != nil && s.client.running,
+		Connected:     s.client != nil && s.client.IsRunning(),
 		ServerAddress: s.config.ServerAddress,
 		ServerPort:    s.config.ServerPort,
 	}
@@ -805,5 +806,5 @@ func (s *VPNService) IsServerRunning() bool {
 func (s *VPNService) IsClientRunning() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.client != nil && s.client.running
+	return s.client != nil && s.client.IsRunning()
 }

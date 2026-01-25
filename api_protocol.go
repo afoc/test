@@ -5,8 +5,7 @@ import (
 	"time"
 )
 
-// ControlSocketPath 控制 API 的 Unix Socket 路径
-const ControlSocketPath = "/var/run/vpn_control.sock"
+// ControlSocketPath 在 constants_unix.go 和 constants_windows.go 中定义
 
 // ================ API 请求/响应协议 ================
 

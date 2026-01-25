@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
@@ -14,8 +15,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/songgao/water"
 )
 
 // VPNSession VPN会话结构
@@ -95,18 +94,18 @@ type VPNServer struct {
 	listener      net.Listener
 	tlsConfig     *tls.Config
 	sessions      map[string]*VPNSession
-	ipToSession   map[string]*VPNSession // 新增：IP到会话的快速映射
+	ipToSession   map[string]*VPNSession // IP到会话的快速映射
 	sessionMutex  sync.RWMutex
-	running       bool
-	shutdownChan  chan struct{}
+	cancel        context.CancelFunc // 用于停止服务器
+	cancelMutex   sync.Mutex
 	vpnNetwork    *net.IPNet
 	clientIPPool  *IPPool
 	packetHandler func([]byte) error
 	sessionCount  int64
 	config        VPNConfig
-	tunDevice     *water.Interface
+	tunDevice     TUNDevice // 统一的TUN设备接口
 	serverIP      net.IP
-	natRules      []NATRule // 新增：NAT规则跟踪
+	natRules      []NATRule // NAT规则跟踪
 }
 
 // NewVPNServer 创建新的VPN服务器
@@ -131,14 +130,12 @@ func NewVPNServer(address string, certManager *CertificateManager, config VPNCon
 		listener:     listener,
 		tlsConfig:    serverConfig,
 		sessions:     make(map[string]*VPNSession),
-		ipToSession:  make(map[string]*VPNSession), // 初始化IP映射
-		running:      true,
-		shutdownChan: make(chan struct{}),
+		ipToSession:  make(map[string]*VPNSession),
 		vpnNetwork:   vpnNetwork,
 		clientIPPool: NewIPPool(vpnNetwork, &config),
 		config:       config,
 		serverIP:     vpnNetwork.IP.To4(),
-		natRules:     make([]NATRule, 0), // 初始化NAT规则列表
+		natRules:     make([]NATRule, 0),
 	}, nil
 }
 
@@ -149,8 +146,8 @@ func (s *VPNServer) InitializeTUN() error {
 		return err
 	}
 
-	// 创建TUN设备（自动选择可用名称）
-	tun, err := createTUNDevice("tun")
+	// 创建TUN设备（自动选择可用名称，传入网络配置）
+	tun, err := createTUNDevice("tun", s.config.Network)
 	if err != nil {
 		return err
 	}
@@ -179,37 +176,63 @@ func (s *VPNServer) InitializeTUN() error {
 	return nil
 }
 
-// Start 启动VPN服务器
-func (s *VPNServer) Start() {
+// Start 启动VPN服务器（接受 context 控制生命周期）
+func (s *VPNServer) Start(ctx context.Context) {
 	log.Printf("VPN服务器启动，监听地址: %s", s.listener.Addr())
-	defer s.listener.Close()
+
+	// 创建内部 context
+	ctx, cancel := context.WithCancel(ctx)
+	s.cancelMutex.Lock()
+	s.cancel = cancel
+	s.cancelMutex.Unlock()
+
+	// 使用 sync.Once 确保 listener 只关闭一次
+	var closeOnce sync.Once
+	closeListener := func() {
+		closeOnce.Do(func() {
+			s.listener.Close()
+		})
+	}
+
+	defer func() {
+		s.cancelMutex.Lock()
+		s.cancel = nil
+		s.cancelMutex.Unlock()
+		closeListener()
+	}()
 
 	// 如果有TUN设备，启动TUN数据转发
 	if s.tunDevice != nil {
-		go s.handleTUNRead()
+		go s.handleTUNRead(ctx)
 	}
 
 	// 启动会话清理协程
-	go s.cleanupSessions()
+	go s.cleanupSessions(ctx)
 
-	for s.running {
+	// 监听 context 取消，关闭 listener 以中断 Accept
+	go func() {
+		<-ctx.Done()
+		closeListener()
+	}()
+
+	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
-			if !s.running {
-				break
+			if ctx.Err() != nil {
+				break // context 已取消
 			}
 			log.Printf("接受连接失败: %v", err)
 			continue
 		}
 
-		go s.handleConnection(conn)
+		go s.handleConnection(ctx, conn)
 	}
 
 	log.Println("VPN服务器已停止")
 }
 
 // handleConnection 处理连接
-func (s *VPNServer) handleConnection(conn net.Conn) {
+func (s *VPNServer) handleConnection(ctx context.Context, conn net.Conn) {
 	tlsConn, ok := conn.(*tls.Conn)
 	if !ok {
 		log.Printf("非TLS连接被拒绝: %s", conn.RemoteAddr())
@@ -266,7 +289,7 @@ func (s *VPNServer) handleConnection(conn net.Conn) {
 		LastActivity:  time.Now(),
 		IP:            clientIP,
 		CertSubject:   certSubject,
-		sendSeq:       0, // 初始化序列号
+		sendSeq:       0,
 		recvSeq:       0,
 		BytesSent:     0,
 		BytesReceived: 0,
@@ -281,7 +304,7 @@ func (s *VPNServer) handleConnection(conn net.Conn) {
 	ipMsg := &Message{
 		Type:     MessageTypeIPAssignment,
 		Length:   uint32(len(clientIP)),
-		Sequence: 0, // IP分配消息不使用序列号
+		Sequence: 0,
 		Checksum: 0,
 		Payload:  clientIP,
 	}
@@ -302,15 +325,14 @@ func (s *VPNServer) handleConnection(conn net.Conn) {
 	// 推送配置给客户端（路由模式、DNS等）
 	if err := s.pushConfigToClient(session); err != nil {
 		log.Printf("推送配置给客户端失败: %v", err)
-		// 配置推送失败不影响连接，继续处理
 	}
 
 	// 启动数据处理协程
-	go s.handleSessionData(session)
+	go s.handleSessionData(ctx, session)
 }
 
 // handleSessionData 处理会话数据
-func (s *VPNServer) handleSessionData(session *VPNSession) {
+func (s *VPNServer) handleSessionData(ctx context.Context, session *VPNSession) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("会话 %s 处理发生panic: %v", session.ID, r)
@@ -320,7 +342,14 @@ func (s *VPNServer) handleSessionData(session *VPNSession) {
 	}()
 
 sessionLoop:
-	for s.running && !session.IsClosed() {
+	for !session.IsClosed() {
+		// 检查 context 是否取消
+		select {
+		case <-ctx.Done():
+			break sessionLoop
+		default:
+		}
+
 		session.TLSConn.SetReadDeadline(time.Now().Add(30 * time.Second))
 
 		// 读取消息头（13字节：类型+长度+序列号+校验和）
@@ -406,7 +435,7 @@ sessionLoop:
 			// 统计接收流量
 			session.AddBytesReceived(uint64(len(payload)))
 
-			// 处理数据包 - 写入TUN设备
+			// 处理数据包 - 直接写入TUN设备（Windows Wintun和Unix/Linux TUN都是Layer 3）
 			if s.tunDevice != nil && len(payload) > 0 {
 				_, err := s.tunDevice.Write(payload)
 				if err != nil {
@@ -525,16 +554,22 @@ func (s *VPNServer) pushConfigToClient(session *VPNSession) error {
 }
 
 // handleTUNRead 处理从TUN设备读取的数据
-func (s *VPNServer) handleTUNRead() {
+func (s *VPNServer) handleTUNRead(ctx context.Context) {
 	packet := make([]byte, s.config.MTU)
 
-	for s.running {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		n, err := s.tunDevice.Read(packet)
 		if err != nil {
-			if s.running {
+			if ctx.Err() == nil {
 				log.Printf("从TUN设备读取失败: %v", err)
 			}
-			break
+			return
 		}
 
 		if n < 20 { // IP header minimum size
@@ -587,29 +622,30 @@ func (s *VPNServer) removeSession(id string) {
 }
 
 // cleanupSessions 清理会话
-func (s *VPNServer) cleanupSessions() {
+func (s *VPNServer) cleanupSessions(ctx context.Context) {
 	ticker := time.NewTicker(s.config.SessionCleanupInterval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		if !s.running {
+	for {
+		select {
+		case <-ctx.Done():
 			return
-		}
-
-		// 收集需要清理的会话ID
-		var toCleanup []string
-		s.sessionMutex.RLock()
-		for id, session := range s.sessions {
-			if time.Since(session.GetActivity()) > s.config.SessionTimeout {
-				toCleanup = append(toCleanup, id)
+		case <-ticker.C:
+			// 收集需要清理的会话ID
+			var toCleanup []string
+			s.sessionMutex.RLock()
+			for id, session := range s.sessions {
+				if time.Since(session.GetActivity()) > s.config.SessionTimeout {
+					toCleanup = append(toCleanup, id)
+				}
 			}
-		}
-		s.sessionMutex.RUnlock()
+			s.sessionMutex.RUnlock()
 
-		// 释放锁后再清理会话
-		for _, id := range toCleanup {
-			log.Printf("清理超时会话: %s", id)
-			s.removeSession(id)
+			// 释放锁后再清理会话
+			for _, id := range toCleanup {
+				log.Printf("清理超时会话: %s", id)
+				s.removeSession(id)
+			}
 		}
 	}
 }
@@ -640,9 +676,17 @@ func (s *VPNServer) cleanupNATRules() {
 
 // Stop 停止服务器
 func (s *VPNServer) Stop() {
-	s.running = false
-	close(s.shutdownChan)
-	_ = s.listener.Close()
+	// 取消 context，停止所有协程
+	s.cancelMutex.Lock()
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.cancelMutex.Unlock()
+
+	// 关闭 listener
+	if s.listener != nil {
+		_ = s.listener.Close()
+	}
 
 	// 收集所有会话ID
 	s.sessionMutex.Lock()
@@ -670,7 +714,9 @@ func (s *VPNServer) Stop() {
 
 // IsRunning 检查服务器是否运行中
 func (s *VPNServer) IsRunning() bool {
-	return s.running
+	s.cancelMutex.Lock()
+	defer s.cancelMutex.Unlock()
+	return s.cancel != nil
 }
 
 // GetSessionCount 获取在线会话数

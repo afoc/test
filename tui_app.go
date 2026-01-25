@@ -12,16 +12,16 @@ import (
 
 // TUIApp TUI 应用程序
 type TUIApp struct {
-	app          *tview.Application
-	pages        *tview.Pages
-	menuList     *tview.List
-	logView      *tview.TextView
-	statusBar    *tview.TextView
-	logBuffer    *LogBuffer
-	menuStack    []string
-	stopChan     chan struct{}
-	client       *ControlClient // API 客户端
-	lastLogSeq   uint64         // 最后获取的日志序号
+	app        *tview.Application
+	pages      *tview.Pages
+	menuList   *tview.List
+	logView    *tview.TextView
+	statusBar  *tview.TextView
+	logBuffer  *LogBuffer
+	menuStack  []string
+	stopChan   chan struct{}
+	lastLogSeq uint64         // 最后获取的日志序号
+	client     *ControlClient // IPC 客户端
 }
 
 // LogBuffer 环形日志缓冲区
@@ -70,7 +70,8 @@ func (lb *LogBuffer) AddLineRaw(line string) {
 
 func (lb *LogBuffer) addLineNoLock(line string) {
 	timestamp := time.Now().Format("15:04:05")
-	formatted := fmt.Sprintf("[gray]%s[white] %s", timestamp, line)
+	// 使用 Cyberpunk 配色
+	formatted := fmt.Sprintf("[#786496]%s[-] [#C8C8DC]%s[-]", timestamp, line)
 	lb.lines = append(lb.lines, formatted)
 	if len(lb.lines) > lb.maxLines {
 		lb.lines = lb.lines[1:]
@@ -92,14 +93,14 @@ func (lb *LogBuffer) Clear() {
 }
 
 // NewTUIApp 创建 TUI 应用
-func NewTUIApp() *TUIApp {
+func NewTUIApp(client *ControlClient) *TUIApp {
 	t := &TUIApp{
 		app:       tview.NewApplication(),
 		pages:     tview.NewPages(),
 		logBuffer: NewLogBuffer(500),
 		menuStack: []string{"main"},
 		stopChan:  make(chan struct{}),
-		client:    NewControlClient(),
+		client:    client,
 	}
 	t.setupUI()
 	return t
@@ -107,44 +108,83 @@ func NewTUIApp() *TUIApp {
 
 // setupUI 设置 UI 布局
 func (t *TUIApp) setupUI() {
-	// 日志视图
+	// ASCII Art 标题
+	logoView := tview.NewTextView().
+		SetDynamicColors(true).
+		SetTextAlign(tview.AlignCenter).
+		SetText(ASCIILogoCompact)
+	logoView.SetBackgroundColor(ColorBgDeep)
+
+	// 日志视图 - 双线边框
 	t.logView = tview.NewTextView().
 		SetDynamicColors(true).
 		SetScrollable(true)
-	t.logView.SetBorder(true).SetTitle(" 系统日志 (F2清空) ")
+	t.logView.SetBorder(true).
+		SetTitle(" [#00FFFF]◈[-] [#FF00FF]系统日志[-] ").
+		SetTitleAlign(tview.AlignLeft).
+		SetBorderColor(ColorNeonPurple).
+		SetBackgroundColor(ColorBgMain).
+		SetTitleColor(ColorNeonCyan)
+	t.logView.SetBorderPadding(0, 0, 1, 1)
 
-	// 菜单列表
+	// 菜单列表 - 双线边框
 	t.menuList = tview.NewList().
 		SetHighlightFullLine(true).
-		SetSelectedBackgroundColor(tcell.ColorDarkCyan).
-		SetSelectedTextColor(tcell.ColorWhite)
-	t.menuList.SetBorder(true)
+		SetSelectedBackgroundColor(ColorBgSelect).
+		SetSelectedTextColor(ColorNeonCyan).
+		SetMainTextColor(ColorTextNormal).
+		SetSecondaryTextColor(ColorTextDim).
+		SetShortcutColor(ColorNeonPink)
+	t.menuList.SetBorder(true).
+		SetBorderColor(ColorNeonPurple).
+		SetBackgroundColor(ColorBgMain).
+		SetTitleColor(ColorNeonCyan)
+	t.menuList.SetBorderPadding(0, 0, 1, 1)
 
-	// 状态栏
+	// 状态栏 - 霓虹风格
 	t.statusBar = tview.NewTextView().
 		SetDynamicColors(true).
 		SetTextAlign(tview.AlignCenter).
 		SetWrap(false)
-	t.statusBar.SetBackgroundColor(tcell.ColorDarkBlue)
+	t.statusBar.SetBackgroundColor(ColorBgPanel)
+	t.statusBar.SetTextColor(ColorTextNormal)
 
-	// 布局
+	// 帮助栏 - 霓虹快捷键
+	helpBar := tview.NewTextView().
+		SetDynamicColors(true).
+		SetTextAlign(tview.AlignCenter).
+		SetText("[#FF00FF]Tab[-] 切换  [#00FFFF]F2[-] 清屏  [#39FF14]Esc[-] 返回  [#FFE900]q[-] 退出")
+	helpBar.SetBackgroundColor(ColorBgDeep)
+	helpBar.SetTextColor(ColorTextDim)
+
+	// 左侧面板（菜单）
 	leftPanel := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(t.menuList, 0, 1, true)
 
+	// 主内容区
 	mainFlex := tview.NewFlex().
 		AddItem(leftPanel, 40, 0, true).
 		AddItem(t.logView, 0, 1, false)
 
+	// 整体布局
 	layout := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(logoView, 4, 0, false).
 		AddItem(mainFlex, 0, 1, true).
-		AddItem(t.statusBar, 1, 0, false)
+		AddItem(t.statusBar, 1, 0, false).
+		AddItem(helpBar, 1, 0, false)
 
 	t.pages.AddPage("main", layout, true, true)
+
+	// 设置全局背景色
+	t.app.SetBeforeDrawFunc(func(screen tcell.Screen) bool {
+		screen.Clear()
+		return false
+	})
 
 	// 全局按键
 	t.app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		frontPage, _ := t.pages.GetFrontPage()
-		if frontPage == "input" || frontPage == "confirm" || frontPage == "info" {
+		if frontPage == "input" || frontPage == "confirm" || frontPage == "info" || frontPage == "exitDialog" || frontPage == "loading" {
 			return event
 		}
 
@@ -153,7 +193,7 @@ func (t *TUIApp) setupUI() {
 			t.logBuffer.Clear()
 			t.logView.Clear()
 			t.logView.SetText("")
-			t.addLog("日志已清空")
+			t.addLog("[#39FF14]⚡ 日志已清空[-]")
 			t.app.ForceDraw()
 			return nil
 		case tcell.KeyEsc:
@@ -191,24 +231,27 @@ func (t *TUIApp) addLog(format string, args ...interface{}) {
 
 // updateStatusBar 更新状态栏
 func (t *TUIApp) updateStatusBar() {
-	serverStatus := "[red]未运行"
-	clientStatus := "[red]未连接"
+	serverIcon := "[#FF5F1F]" + StatusStopped + "[-]" // 霓虹橙圆点
+	serverStatus := "[#FF5F1F]未运行[-]"
+	clientIcon := "[#FF5F1F]" + StatusDisconnected + "[-]"
+	clientStatus := "[#FF5F1F]未连接[-]"
 
-	// 通过 API 获取状态
 	if t.client.IsServiceRunning() {
 		if status, err := t.client.ServerStatus(); err == nil && status.Running {
-			serverStatus = fmt.Sprintf("[green]运行中[white] (%d客户端)", status.ClientCount)
+			serverIcon = "[#39FF14]" + StatusRunning + "[-]" // 荧光绿圆点
+			serverStatus = fmt.Sprintf("[#39FF14]运行中[-] [#00FFFF](%d)[-]", status.ClientCount)
 		}
 		if status, err := t.client.ClientStatus(); err == nil && status.Connected {
+			clientIcon = "[#39FF14]" + StatusConnected + "[-]"
 			if status.AssignedIP != "" {
-				clientStatus = fmt.Sprintf("[green]已连接[white] (%s)", status.AssignedIP)
+				clientStatus = fmt.Sprintf("[#39FF14]已连接[-] [#00FFFF](%s)[-]", status.AssignedIP)
 			} else {
-				clientStatus = "[yellow]连接中..."
+				clientStatus = "[#FFE900]连接中...[-]"
 			}
 		}
 	}
 
-	t.statusBar.SetText(fmt.Sprintf(" [white]服务端: %s  │  客户端: %s  │  [gray]Tab切换 F2清日志 Esc返回 q退出", serverStatus, clientStatus))
+	t.statusBar.SetText(fmt.Sprintf(" [#FF00FF]◈[-] 服务端: %s %s   [#BF00FF]│[-]   [#00FFFF]◇[-] 客户端: %s %s ", serverIcon, serverStatus, clientIcon, clientStatus))
 }
 
 // startUpdater 启动状态更新器
@@ -255,22 +298,22 @@ func (t *TUIApp) fetchServiceLogs() {
 
 	// 添加新日志到本地缓冲区
 	for _, entry := range resp.Logs {
-		// 根据日志级别添加颜色
+		// 根据日志级别使用 Cyberpunk 配色
 		var colorTag string
 		switch entry.Level {
 		case "error":
-			colorTag = "[red]"
+			colorTag = "[#FF5F1F]" // 霓虹橙
 		case "warn":
-			colorTag = "[yellow]"
+			colorTag = "[#FFE900]" // 激光黄
 		default:
-			colorTag = "[white]"
+			colorTag = "[#C8C8DC]" // 普通文字
 		}
 
 		// 格式化时间
 		logTime := time.UnixMilli(entry.Time).Format("15:04:05")
 
 		// 添加到日志缓冲区（带颜色和时间戳）
-		formatted := fmt.Sprintf("[gray]%s %s%s[white]", logTime, colorTag, entry.Message)
+		formatted := fmt.Sprintf("[#786496]%s[-] %s%s[-]", logTime, colorTag, entry.Message)
 		t.logBuffer.AddLineRaw(formatted)
 	}
 
@@ -287,11 +330,11 @@ func (t *TUIApp) showMenu(menuName string) {
 	menus := GetMenus()
 	menuDef, ok := menus[menuName]
 	if !ok {
-		t.addLog("[red]未知菜单: %s", menuName)
+		t.addLog("[#FF5F1F]✖ 未知菜单: %s[-]", menuName)
 		return
 	}
 
-	t.menuList.SetTitle(" " + menuDef.Title + " ")
+	t.menuList.SetTitle(" [#00FFFF]" + menuDef.Title + "[-] ")
 
 	for _, item := range menuDef.Items {
 		itemCopy := item // 避免闭包问题
@@ -308,7 +351,7 @@ func (t *TUIApp) showMenu(menuName string) {
 
 	// 自动添加返回上级
 	if menuDef.Parent != "" {
-		t.menuList.AddItem("[yellow]返回上级", "", 'b', func() {
+		t.menuList.AddItem("[#FFE900]◀ 返回上级[-]", "", 'b', func() {
 			if len(t.menuStack) > 1 {
 				t.menuStack = t.menuStack[:len(t.menuStack)-1]
 				t.showMenu(t.menuStack[len(t.menuStack)-1])
@@ -333,13 +376,6 @@ func (t *TUIApp) Run() error {
 	t.logBuffer.AddLine("TLS VPN 管理系统已启动")
 	t.logView.SetText(t.logBuffer.GetContent())
 
-	// 检查服务是否运行
-	if !t.client.IsServiceRunning() {
-		t.logBuffer.AddLine("[yellow]后台服务未运行，部分功能不可用")
-		t.logBuffer.AddLine("[yellow]请先运行: ./tls-vpn --service")
-		t.logView.SetText(t.logBuffer.GetContent())
-	}
-
 	go func() {
 		time.Sleep(100 * time.Millisecond)
 		t.startUpdater()
@@ -350,12 +386,69 @@ func (t *TUIApp) Run() error {
 
 // Stop 停止应用
 func (t *TUIApp) Stop() {
-	// 使用 sync.Once 或检查来避免重复关闭
 	select {
 	case <-t.stopChan:
-		// 已经关闭
+		return // 已经关闭
 	default:
 		close(t.stopChan)
 	}
 	t.app.Stop()
+}
+
+// RequestExit 请求退出
+func (t *TUIApp) RequestExit() {
+	// 检查是否有活跃的 VPN 服务
+	hasActiveVPN := false
+	if t.client.IsServiceRunning() {
+		if status, err := t.client.ServerStatus(); err == nil && status.Running {
+			hasActiveVPN = true
+		}
+		if status, err := t.client.ClientStatus(); err == nil && status.Connected {
+			hasActiveVPN = true
+		}
+	}
+
+	if hasActiveVPN {
+		// 有 VPN 运行，显示对话框让用户选择
+		t.showExitDialog()
+	} else {
+		// 没有 VPN 运行，直接停止后台服务并退出
+		t.addLog("正在停止后台服务...")
+		t.client.Shutdown()
+		t.Stop()
+	}
+}
+
+// showExitDialog 显示退出确认对话框（仅当有 VPN 运行时）
+func (t *TUIApp) showExitDialog() {
+	modal := tview.NewModal().
+		SetText("[#00FFFF]⚡[-] VPN 服务正在运行\n\n退出后服务将继续在后台运行").
+		AddButtons([]string{"退出界面", "停止服务", "取消"}).
+		SetBackgroundColor(ColorBgPanel).
+		SetTextColor(ColorTextBright).
+		SetButtonBackgroundColor(ColorNeonCyan).
+		SetButtonTextColor(ColorBgDeep).
+		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			t.pages.RemovePage("exitDialog")
+			t.app.SetFocus(t.menuList)
+
+			switch buttonIndex {
+			case 0: // 退出管理界面（服务继续后台运行）
+				t.addLog("[#39FF14]⚡ 退出管理界面，服务继续后台运行[-]")
+				t.Stop()
+			case 1: // 停止后台服务
+				t.addLog("[#FFE900]⏳ 正在停止后台服务...[-]")
+				if _, err := t.client.Shutdown(); err != nil {
+					t.addLog("[#FF5F1F]✖ 停止失败: %v[-]", err)
+				} else {
+					t.addLog("[#39FF14]✔ 后台服务已停止[-]")
+				}
+				t.Stop()
+			case 2: // 取消
+				t.addLog("[#786496]取消退出[-]")
+			}
+		})
+
+	t.pages.AddPage("exitDialog", modal, true, true)
+	t.app.SetFocus(modal)
 }

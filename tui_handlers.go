@@ -937,11 +937,7 @@ func handleClientWizard(t *TUIApp) {
 // ================ 系统处理 ================
 
 func handleExit(t *TUIApp) {
-	t.showConfirmDialog("确定退出?", func(confirmed bool) {
-		if confirmed {
-			t.Stop()
-		}
-	})
+	t.RequestExit()
 }
 
 // ================ 辅助函数 ================

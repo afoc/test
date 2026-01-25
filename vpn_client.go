@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"encoding/hex"
@@ -11,36 +12,34 @@ import (
 	"log"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
-
-	"github.com/songgao/water"
 )
 
 // VPNClient VPN客户端结构
 type VPNClient struct {
-	tlsConfig      *tls.Config
-	conn           *tls.Conn
-	connMutex      sync.Mutex
-	assignedIP     net.IP
-	running        bool
-	reconnect      bool
-	config         VPNConfig
-	packetHandler  func([]byte) error
-	heartbeatStop  chan struct{}
-	heartbeatMutex sync.Mutex
-	tunDevice      *water.Interface
-	sendSeq        uint32        // 新增：发送序列号
-	recvSeq        uint32        // 新增：接收序列号
-	seqMutex       sync.Mutex    // 新增：序列号锁
-	routeManager   *RouteManager // 新增：路由管理器
+	tlsConfig     *tls.Config
+	conn          *tls.Conn
+	connMutex     sync.Mutex
+	assignedIP    net.IP
+	reconnect     int32 // 使用 atomic，1=true, 0=false
+	config        VPNConfig
+	packetHandler func([]byte) error
+	cancel        context.CancelFunc // 主 context 取消函数
+	cancelMutex   sync.Mutex
+	tunDevice     TUNDevice // 统一的TUN设备接口
+	sendSeq       uint32        // 发送序列号
+	recvSeq       uint32        // 接收序列号
+	seqMutex      sync.Mutex    // 序列号锁
+	routeManager  *RouteManager // 路由管理器
+	retryCount    int           // 重连计数器
 }
 
 // NewVPNClient 创建新的VPN客户端
 func NewVPNClient(certManager *CertificateManager, config VPNConfig) *VPNClient {
 	return &VPNClient{
 		tlsConfig:     certManager.ClientTLSConfig(),
-		running:       true,
-		reconnect:     true,
+		reconnect:     1, // 1 表示 true
 		config:        config,
 		packetHandler: nil,
 	}
@@ -53,8 +52,16 @@ func (c *VPNClient) InitializeTUN() error {
 		return err
 	}
 
-	// 创建TUN设备（自动选择可用名称）
-	tun, err := createTUNDevice("tun")
+	// 客户端使用默认网络配置创建TUN设备（实际IP由服务器分配）
+	// 如果配置中没有 Network，使用默认值
+	network := c.config.Network
+	if network == "" {
+		network = "10.8.0.0/24" // 客户端默认使用这个网段创建TUN
+		log.Printf("客户端使用默认网络配置: %s", network)
+	}
+
+	// 创建TUN设备（自动选择可用名称，传入网络配置）
+	tun, err := createTUNDevice("tun", network)
 	if err != nil {
 		return err
 	}
@@ -83,14 +90,19 @@ func (c *VPNClient) ConfigureTUN() error {
 	return nil
 }
 
-// Connect 连接到VPN服务器
-func (c *VPNClient) Connect() error {
+// Connect 连接到VPN服务器（支持 context 超时/取消）
+func (c *VPNClient) Connect(ctx context.Context) error {
 	address := fmt.Sprintf("%s:%d", c.config.ServerAddress, c.config.ServerPort)
 
-	conn, err := tls.Dial("tcp", address, c.tlsConfig)
+	// 使用带超时的 dialer
+	dialer := &net.Dialer{Timeout: 30 * time.Second}
+	netConn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
 		return fmt.Errorf("连接失败: %v", err)
 	}
+
+	// 升级为 TLS 连接
+	conn := tls.Client(netConn, c.tlsConfig)
 
 	err = conn.Handshake()
 	if err != nil {
@@ -310,56 +322,105 @@ func (c *VPNClient) ReceiveData() (MessageType, []byte, error) {
 	return msgType, payload, nil
 }
 
-// Run 运行客户端
-func (c *VPNClient) Run() {
-	for c.running && c.reconnect {
-		err := c.Connect()
+// Run 运行客户端（接受 context 控制生命周期）
+func (c *VPNClient) Run(ctx context.Context) {
+	maxRetries := 5 // 最大重连次数，0表示无限
+
+	// 保存 cancel 函数供 Close() 使用
+	c.cancelMutex.Lock()
+	ctx, c.cancel = context.WithCancel(ctx)
+	c.cancelMutex.Unlock()
+
+	defer func() {
+		c.cancelMutex.Lock()
+		c.cancel = nil
+		c.cancelMutex.Unlock()
+	}()
+
+	for atomic.LoadInt32(&c.reconnect) == 1 {
+		// 检查是否被取消
+		select {
+		case <-ctx.Done():
+			log.Println("收到停止信号，退出客户端...")
+			return
+		default:
+		}
+
+		err := c.Connect(ctx)
 		if err != nil {
-			log.Printf("连接失败: %v，%v秒后重试", err, c.config.ReconnectDelay/time.Second)
-			time.Sleep(c.config.ReconnectDelay)
+			// 检查是否是因为 context 取消
+			if ctx.Err() != nil {
+				return
+			}
+			c.retryCount++
+			if maxRetries > 0 && c.retryCount >= maxRetries {
+				log.Printf("连接失败: %v，已达最大重试次数(%d)，停止重连", err, maxRetries)
+				atomic.StoreInt32(&c.reconnect, 0)
+				break
+			}
+			log.Printf("连接失败: %v，%v秒后重试 (%d/%d)", err, c.config.ReconnectDelay/time.Second, c.retryCount, maxRetries)
+
+			// 可中断的等待
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(c.config.ReconnectDelay):
+			}
 			continue
 		}
 
+		// 连接成功，重置计数器
+		c.retryCount = 0
 		log.Println("VPN客户端已连接，开始数据传输...")
 
 		// 如果有TUN设备，配置它
 		if c.tunDevice != nil && c.assignedIP != nil {
 			if err := c.ConfigureTUN(); err != nil {
 				log.Printf("配置TUN设备失败: %v", err)
-				c.Close()
+				c.closeConnection()
 				continue
 			}
 
 			// 配置路由
 			if err := c.setupRoutes(); err != nil {
 				log.Printf("配置路由失败: %v", err)
-				c.Close()
+				c.closeConnection()
 				continue
 			}
 		}
 
-		// 初始化心跳停止通道
-		c.heartbeatMutex.Lock()
-		c.heartbeatStop = make(chan struct{})
-		c.heartbeatMutex.Unlock()
+		// 创建当前会话的 context（用于控制本次连接的所有协程）
+		sessionCtx, sessionCancel := context.WithCancel(ctx)
 
 		// 启动心跳协程
-		go c.startHeartbeat()
+		go c.startHeartbeat(sessionCtx)
 
 		// 如果有TUN设备，启动TUN读取协程
 		if c.tunDevice != nil {
-			go c.handleTUNRead()
+			go c.handleTUNRead(sessionCtx)
 		}
 
 		// 数据传输循环
-		c.dataLoop()
+		c.dataLoop(sessionCtx)
 
-		// 停止心跳协程
-		c.stopHeartbeat()
+		// 停止本次会话的所有协程
+		sessionCancel()
 
-		if c.reconnect {
-			log.Println("连接断开，尝试重连...")
-			time.Sleep(c.config.ReconnectDelay)
+		// 关闭当前连接（重要：避免资源泄漏）
+		c.closeConnection()
+
+		// 检查是否需要重连
+		if ctx.Err() != nil {
+			return
+		}
+
+		if atomic.LoadInt32(&c.reconnect) == 1 {
+			log.Println("连接断开，准备重连...")
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(c.config.ReconnectDelay):
+			}
 		}
 	}
 
@@ -367,13 +428,9 @@ func (c *VPNClient) Run() {
 }
 
 // startHeartbeat 开始心跳
-func (c *VPNClient) startHeartbeat() {
+func (c *VPNClient) startHeartbeat(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-
-	c.heartbeatMutex.Lock()
-	stopChan := c.heartbeatStop
-	c.heartbeatMutex.Unlock()
 
 	for {
 		select {
@@ -392,33 +449,30 @@ func (c *VPNClient) startHeartbeat() {
 				log.Printf("发送心跳失败: %v", err)
 				return
 			}
-		case <-stopChan:
+		case <-ctx.Done():
 			return
 		}
 	}
 }
 
-// stopHeartbeat 停止心跳协程
-func (c *VPNClient) stopHeartbeat() {
-	c.heartbeatMutex.Lock()
-	defer c.heartbeatMutex.Unlock()
-	if c.heartbeatStop != nil {
-		close(c.heartbeatStop)
-		c.heartbeatStop = nil
-	}
-}
-
 // handleTUNRead 处理从TUN设备读取的数据
-func (c *VPNClient) handleTUNRead() {
+func (c *VPNClient) handleTUNRead(ctx context.Context) {
 	packet := make([]byte, c.config.MTU)
 
-	for c.running {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		// 从TUN设备读取IP包（Windows Wintun和Unix/Linux TUN都是Layer 3）
 		n, err := c.tunDevice.Read(packet)
 		if err != nil {
-			if c.running {
+			if ctx.Err() == nil {
 				log.Printf("从TUN设备读取失败: %v", err)
 			}
-			break
+			return
 		}
 
 		if n < 20 { // IP header minimum size
@@ -429,32 +483,41 @@ func (c *VPNClient) handleTUNRead() {
 		err = c.SendData(packet[:n])
 		if err != nil {
 			log.Printf("发送数据包失败: %v", err)
-			break
+			return
 		}
 	}
 }
 
 // dataLoop 数据传输循环
-func (c *VPNClient) dataLoop() {
-	for c.running {
+func (c *VPNClient) dataLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		c.connMutex.Lock()
 		conn := c.conn
 		c.connMutex.Unlock()
 
 		if conn == nil {
-			break
+			return
 		}
 
 		_ = conn.SetReadDeadline(time.Now().Add(c.config.KeepAliveTimeout))
 
 		msgType, data, err := c.ReceiveData()
 		if err != nil {
+			if ctx.Err() != nil {
+				return // context 已取消
+			}
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				log.Printf("连接超时")
-				break
+				return
 			}
 			log.Printf("读取数据失败: %v", err)
-			break
+			return
 		}
 
 		// 处理心跳响应 - 不打印日志
@@ -480,7 +543,7 @@ func (c *VPNClient) dataLoop() {
 		// 处理数据包
 		if msgType == MessageTypeData && data != nil && len(data) > 0 {
 			if c.tunDevice != nil {
-				// 写入TUN设备
+				// 直接写入TUN设备（Windows Wintun和Unix/Linux TUN都是Layer 3）
 				_, err := c.tunDevice.Write(data)
 				if err != nil {
 					log.Printf("写入TUN设备失败: %v", err)
@@ -548,8 +611,10 @@ func (c *VPNClient) setupFullTunnelRoutes(rm *RouteManager) error {
 		vpnGateway = "10.8.0.1" // 默认值
 	}
 
-	// 添加 0.0.0.0/1 和 128.0.0.0/1 路由（覆盖所有IP）
+	// 使用TUN设备名称（Wintun设备名称）
 	tunDeviceName := c.tunDevice.Name()
+
+	// 添加 0.0.0.0/1 和 128.0.0.0/1 路由（覆盖所有IP）
 	routes := []string{"0.0.0.0/1", "128.0.0.0/1"}
 	for _, route := range routes {
 		// 检查是否被排除
@@ -603,8 +668,10 @@ func (c *VPNClient) setupSplitTunnelRoutes(rm *RouteManager) error {
 		vpnGateway = "10.8.0.1"
 	}
 
-	// 只添加 push_routes 中的路由
+	// 使用TUN设备名称
 	tunDeviceName := c.tunDevice.Name()
+
+	// 只添加 push_routes 中的路由
 	for _, route := range c.config.PushRoutes {
 		if err := rm.AddRoute(route, vpnGateway, tunDeviceName); err != nil {
 			log.Printf("警告：添加路由 %s 失败: %v", route, err)
@@ -625,13 +692,26 @@ func (c *VPNClient) isExcluded(route string) bool {
 	return false
 }
 
-// Close 关闭客户端
-func (c *VPNClient) Close() {
-	c.running = false
-	c.reconnect = false
+// closeConnection 关闭当前连接（不停止整个客户端，用于重连场景）
+func (c *VPNClient) closeConnection() {
+	c.connMutex.Lock()
+	if c.conn != nil {
+		_ = c.conn.Close()
+		c.conn = nil
+	}
+	c.connMutex.Unlock()
+}
 
-	// 停止心跳协程
-	c.stopHeartbeat()
+// Close 关闭客户端（完全停止）
+func (c *VPNClient) Close() {
+	atomic.StoreInt32(&c.reconnect, 0)
+
+	// 取消所有协程
+	c.cancelMutex.Lock()
+	if c.cancel != nil {
+		c.cancel()
+	}
+	c.cancelMutex.Unlock()
 
 	// 清理路由和DNS
 	if c.routeManager != nil {
@@ -639,19 +719,22 @@ func (c *VPNClient) Close() {
 		_ = c.routeManager.RestoreDNS()
 	}
 
-	c.connMutex.Lock()
-	if c.conn != nil {
-		_ = c.conn.Close()
-		c.conn = nil
-	}
-	c.connMutex.Unlock()
+	// 关闭连接
+	c.closeConnection()
 
-	// 清理TUN设备
+	// 清理TUN设备（这也会使 handleTUNRead 中的阻塞 Read 返回错误）
 	if c.tunDevice != nil {
 		deviceName := c.tunDevice.Name()
 		_ = c.tunDevice.Close()
 		cleanupTUNDevice(deviceName)
 	}
+}
+
+// IsRunning 检查客户端是否在运行
+func (c *VPNClient) IsRunning() bool {
+	c.cancelMutex.Lock()
+	defer c.cancelMutex.Unlock()
+	return c.cancel != nil
 }
 
 // applyServerConfig 应用服务器推送的配置
