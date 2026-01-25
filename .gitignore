@@ -1,5 +1,9 @@
 # Binaries
 vpn
+tls-vpn
+tls-vpn.exe
+tls-vpn-x86.exe
+bin/
 *.exe
 *.dll
 *.so

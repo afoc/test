@@ -45,6 +45,50 @@
 
 ---
 
+## 📁 项目结构
+
+```
+tls-vpn/
+├── source/              # 源代码目录
+│   ├── *.go            # Go 源代码文件
+│   ├── tokens/         # Token 存储目录
+│   ├── go.mod          # Go 模块定义
+│   └── go.sum          # 依赖版本锁定
+├── bin/                # 编译输出目录（不提交到git）
+│   ├── tls-vpn         # Linux 二进制文件
+│   ├── tls-vpn.exe     # Windows 64位二进制文件
+│   └── tls-vpn-x86.exe # Windows 32位二进制文件
+├── BUILD.md            # 编译说明
+├── README.md           # 项目文档（本文件）
+├── IMPLEMENTATION.md   # 实现细节
+├── WINDOWS_*.md        # Windows 特定文档
+└── UNSAFE_FIX.md       # 安全性相关说明
+```
+
+### 源代码组织
+
+所有 Go 源代码都位于 `source/` 目录中，按功能模块划分：
+
+| 模块 | 文件 | 说明 |
+|------|------|------|
+| **主程序** | `main.go` | 入口、模式选择、信号处理 |
+| **TUI 界面** | `tui_*.go` | 交互式管理界面 |
+| **VPN 核心** | `vpn_*.go` | VPN 服务端、客户端、服务管理 |
+| **证书管理** | `cert_*.go` | CA 管理、证书签发、API 服务器 |
+| **Token 系统** | `token_*.go` | Token 生成、验证、加密存储 |
+| **TUN 设备** | `tun_*.go` | 跨平台 TUN 设备抽象 |
+| **路由管理** | `route_manager*.go` | 自动配置路由表 |
+| **NAT 配置** | `iptables_nat.go` | Linux iptables 规则 |
+| **控制 API** | `control_*.go` | Unix Socket IPC 通信 |
+| **配置系统** | `config.go` | 配置加载、保存、验证 |
+| **协议层** | `protocol_*.go`, `api_protocol.go` | 通信协议定义 |
+| **网络工具** | `ip_pool.go` | IP 地址池管理 |
+| **日志系统** | `service_logger.go` | 日志轮转和管理 |
+| **工具函数** | `utils*.go` | 跨平台工具函数 |
+| **平台特定** | `*_unix.go`, `*_windows.go` | 平台特定实现 |
+
+---
+
 ## 🏗️ 系统架构
 
 ### 整体架构
@@ -133,14 +177,17 @@ github.com/gdamore/tcell/v2     // 终端控制
 # 克隆或进入项目目录
 cd /path/to/tls-vpn
 
+# 进入源代码目录
+cd source
+
 # 拉取依赖
 go mod download
 
 # 编译（自动选择平台）
-go build -o tls-vpn
+go build -o ../bin/tls-vpn
 
 # Linux 交叉编译到 Windows
-GOOS=windows GOARCH=amd64 go build -o tls-vpn.exe
+GOOS=windows GOARCH=amd64 go build -o ../bin/tls-vpn.exe
 
 # Windows 交叉编译到 Linux
 set GOOS=linux
@@ -160,10 +207,10 @@ go build -o tls-vpn
 
 ```bash
 # Linux
-sudo ./tls-vpn
+sudo ./bin/tls-vpn
 
 # Windows (以管理员身份运行)
-tls-vpn.exe
+bin\tls-vpn.exe
 ```
 
 程序会自动：
@@ -187,16 +234,16 @@ tls-vpn.exe
 
 ```bash
 # 查看帮助
-./tls-vpn --help
+./bin/tls-vpn --help
 
 # 仅启动后台服务（无 TUI）
-sudo ./tls-vpn --service
+sudo ./bin/tls-vpn --service
 
 # 查看服务状态
-./tls-vpn --status
+./bin/tls-vpn --status
 
 # 停止服务
-./tls-vpn --stop
+./bin/tls-vpn --stop
 ```
 
 ### 方式 3：systemd 服务（Linux）
@@ -543,10 +590,10 @@ TUI → 2) 配置管理 → 2) 编辑配置 → 修改 route_mode
 
 ```bash
 # 快速状态
-./tls-vpn --status
+./bin/tls-vpn --status
 
 # 详细状态 (TUI)
-./tls-vpn
+./bin/tls-vpn
 → 1) 服务端管理 → 5) 查看在线客户端
 → 1) 服务端管理 → 6) 查看流量统计
 ```
@@ -569,7 +616,7 @@ sudo tail -f /var/log/tls-vpn.log
 Get-Content C:\ProgramData\tls-vpn\tls-vpn.log -Wait -Tail 50
 
 # 或在 TUI 中查看
-./tls-vpn
+./bin/tls-vpn
 → 底部日志窗口自动滚动显示
 ```
 
@@ -659,7 +706,7 @@ client-002       10.8.0.3        45.2 MB      512.8 MB     45m
 
 ```bash
 # 方式 1: 命令行
-./tls-vpn --stop
+./bin/tls-vpn --stop
 
 # 方式 2: 信号
 sudo kill -SIGTERM $(cat /var/run/tlsvpn.pid)
@@ -668,7 +715,7 @@ sudo kill -SIGTERM $(cat /var/run/tlsvpn.pid)
 sudo systemctl stop tls-vpn
 
 # 方式 4: TUI
-./tls-vpn → 选择菜单 → q (退出，服务继续运行)
+./bin/tls-vpn → 选择菜单 → q (退出，服务继续运行)
 ```
 
 #### 强制停止
@@ -720,7 +767,7 @@ ps aux | grep tls-vpn
 sudo rm /var/run/tlsvpn*.pid
 
 # 重新启动
-sudo ./tls-vpn
+sudo ./bin/tls-vpn
 ```
 
 ### 问题 2: TUN 设备创建失败
@@ -917,7 +964,7 @@ curl http://<服务器>:8081/health
 # 应该返回: {"status":"ok"}
 
 # 4. 重新生成 Token
-./tls-vpn
+./bin/tls-vpn
 → 4) Token 管理 → 1) 生成新 Token
 ```
 
@@ -930,8 +977,8 @@ curl http://<服务器>:8081/health
 **解决**:
 ```bash
 # 重启服务端
-./tls-vpn --stop
-./tls-vpn --service &
+./bin/tls-vpn --stop
+./bin/tls-vpn --service &
 
 # 或在 TUI 中重启服务端
 TUI → 1) 服务端管理 → 2) 停止服务端
@@ -1269,13 +1316,15 @@ cd tls-vpn
 go mod download
 
 # 3. 运行测试
+cd source
 go test -v ./...
 
 # 4. 构建
-go build -o tls-vpn
+go build -o ../bin/tls-vpn
 
 # 5. 运行（需要 root）
-sudo ./tls-vpn
+cd ..
+sudo ./bin/tls-vpn
 ```
 
 ### 代码规范

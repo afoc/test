@@ -1,0 +1,29 @@
+# TLS-VPN 二进制文件校验和
+# 生成日期: 2026-01-25
+# 用途: 验证文件完整性
+
+## MD5 校验和
+
+3c8c3bf07acf9c2b5f0ded145e4048a9  tls-vpn
+fe1184100f29b820bea0969d838a8796  tls-vpn.exe
+752aeab1fbf9deb58ccd5ab5c7284879  tls-vpn-x86.exe
+
+## 验证方法
+
+### Linux/macOS
+```bash
+md5sum -c checksums.txt
+```
+
+### Windows (PowerShell)
+```powershell
+Get-FileHash -Algorithm MD5 tls-vpn.exe
+```
+
+## 文件信息
+
+| 文件 | 大小 | 平台 | 架构 |
+|------|------|------|------|
+| tls-vpn | ~12 MB | Linux | x86_64 |
+| tls-vpn.exe | ~13 MB | Windows | x86_64 |
+| tls-vpn-x86.exe | ~12 MB | Windows | x86 |
