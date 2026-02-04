@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -17,7 +19,7 @@ var (
 	ColorBgDeep   = tcell.NewRGBColor(13, 2, 33)   // #0D0221 深紫黑
 	ColorBgMain   = tcell.NewRGBColor(20, 10, 45)  // #140A2D 主背景
 	ColorBgPanel  = tcell.NewRGBColor(30, 15, 60)  // #1E0F3C 面板背景
-	ColorBgSelect = tcell.NewRGBColor(60, 20, 100) // #3C1464 选中背景
+	ColorBgSelect = tcell.NewRGBColor(30, 50, 90)  // #1E325A 选中背景（较暗的蓝青色，确保白色文字清晰可见）
 )
 
 // 霓虹色系
@@ -55,6 +57,155 @@ var (
 	ColorTextSecondary = ColorTextNormal
 	ColorTextMuted     = ColorTextDim
 )
+
+// ============================================================================
+// 主题系统
+// ============================================================================
+
+// Theme 主题配色
+type Theme struct {
+	Name string
+
+	BgDeep   tcell.Color
+	BgMain   tcell.Color
+	BgPanel  tcell.Color
+	BgSelect tcell.Color
+
+	NeonPink   tcell.Color
+	NeonCyan   tcell.Color
+	NeonGreen  tcell.Color
+	NeonYellow tcell.Color
+	NeonOrange tcell.Color
+	NeonPurple tcell.Color
+
+	TextBright tcell.Color
+	TextNormal tcell.Color
+	TextDim    tcell.Color
+}
+
+var themes = map[string]Theme{
+	"cyberpunk": {
+		Name:       "Cyberpunk",
+		BgDeep:     tcell.NewRGBColor(13, 2, 33),
+		BgMain:     tcell.NewRGBColor(20, 10, 45),
+		BgPanel:    tcell.NewRGBColor(30, 15, 60),
+		BgSelect:   tcell.NewRGBColor(30, 50, 90),  // 较暗的蓝青色，比背景亮但不太亮，白色文字清晰
+		NeonPink:   tcell.NewRGBColor(255, 0, 255),
+		NeonCyan:   tcell.NewRGBColor(0, 255, 255),
+		NeonGreen:  tcell.NewRGBColor(57, 255, 20),
+		NeonYellow: tcell.NewRGBColor(255, 233, 0),
+		NeonOrange: tcell.NewRGBColor(255, 95, 31),
+		NeonPurple: tcell.NewRGBColor(191, 0, 255),
+		TextBright: tcell.NewRGBColor(255, 255, 255),
+		TextNormal: tcell.NewRGBColor(200, 200, 220),
+		TextDim:    tcell.NewRGBColor(120, 100, 150),
+	},
+	"matrix": {
+		Name:       "Matrix",
+		BgDeep:     tcell.NewRGBColor(6, 18, 10),
+		BgMain:     tcell.NewRGBColor(10, 28, 16),
+		BgPanel:    tcell.NewRGBColor(14, 40, 22),
+		BgSelect:   tcell.NewRGBColor(25, 80, 35),  // 中等亮度绿色，明显比背景亮，浅绿色文字清晰可见
+		NeonPink:   tcell.NewRGBColor(120, 255, 120),
+		NeonCyan:   tcell.NewRGBColor(90, 255, 160),
+		NeonGreen:  tcell.NewRGBColor(57, 255, 20),
+		NeonYellow: tcell.NewRGBColor(150, 255, 80),
+		NeonOrange: tcell.NewRGBColor(120, 230, 80),
+		NeonPurple: tcell.NewRGBColor(80, 200, 140),
+		TextBright: tcell.NewRGBColor(210, 255, 210),
+		TextNormal: tcell.NewRGBColor(150, 230, 170),
+		TextDim:    tcell.NewRGBColor(80, 160, 110),
+	},
+	"ocean": {
+		Name:       "Ocean",
+		BgDeep:     tcell.NewRGBColor(6, 10, 30),
+		BgMain:     tcell.NewRGBColor(10, 18, 45),
+		BgPanel:    tcell.NewRGBColor(12, 28, 70),
+		BgSelect:   tcell.NewRGBColor(25, 50, 110),  // 中等亮度蓝色，明显比背景亮，浅蓝色文字清晰可见
+		NeonPink:   tcell.NewRGBColor(255, 120, 200),
+		NeonCyan:   tcell.NewRGBColor(80, 220, 255),
+		NeonGreen:  tcell.NewRGBColor(80, 255, 200),
+		NeonYellow: tcell.NewRGBColor(255, 230, 120),
+		NeonOrange: tcell.NewRGBColor(255, 170, 80),
+		NeonPurple: tcell.NewRGBColor(170, 120, 255),
+		TextBright: tcell.NewRGBColor(235, 245, 255),
+		TextNormal: tcell.NewRGBColor(180, 210, 235),
+		TextDim:    tcell.NewRGBColor(120, 150, 190),
+	},
+}
+
+var currentThemeName = "cyberpunk"
+
+// ApplyTheme 应用主题
+func ApplyTheme(name string) bool {
+	theme, ok := themes[name]
+	if !ok {
+		return false
+	}
+
+	ColorBgDeep = theme.BgDeep
+	ColorBgMain = theme.BgMain
+	ColorBgPanel = theme.BgPanel
+	ColorBgSelect = theme.BgSelect
+
+	ColorNeonPink = theme.NeonPink
+	ColorNeonCyan = theme.NeonCyan
+	ColorNeonGreen = theme.NeonGreen
+	ColorNeonYellow = theme.NeonYellow
+	ColorNeonOrange = theme.NeonOrange
+	ColorNeonPurple = theme.NeonPurple
+
+	ColorTextBright = theme.TextBright
+	ColorTextNormal = theme.TextNormal
+	ColorTextDim = theme.TextDim
+
+	applyDerivedColors()
+	currentThemeName = name
+	return true
+}
+
+// GetThemeNames 获取主题名列表
+func GetThemeNames() []string {
+	names := make([]string, 0, len(themes))
+	for name := range themes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// CurrentThemeName 当前主题名
+func CurrentThemeName() string {
+	return currentThemeName
+}
+
+// ColorTag 生成 tview 颜色标签
+func ColorTag(color tcell.Color) string {
+	r, g, b := color.RGB()
+	return fmt.Sprintf("[#%02X%02X%02X]", r, g, b)
+}
+
+func applyDerivedColors() {
+	ColorAccent = ColorNeonCyan
+	ColorAccentAlt = ColorNeonPink
+	ColorSuccess = ColorNeonGreen
+	ColorWarning = ColorNeonYellow
+	ColorError = ColorNeonOrange
+	ColorSpecial = ColorNeonPurple
+
+	ColorBorder = ColorNeonPurple
+	ColorBorderActive = ColorNeonCyan
+
+	ColorBgSecondary = ColorBgPanel
+	ColorBgHighlight = ColorBgSelect
+	ColorTextPrimary = ColorTextBright
+	ColorTextSecondary = ColorTextNormal
+	ColorTextMuted = ColorTextDim
+}
+
+func init() {
+	applyDerivedColors()
+}
 
 // ============================================================================
 // ASCII Art 标题

@@ -1,13 +1,34 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
+const resetTag = "[-]"
+
+func (t *TUIApp) showModalPage(pageID string, modal tview.Primitive) {
+	t.pages.AddPage(pageID, modal, true, true)
+	t.markModalOpen()
+}
+
+func (t *TUIApp) hideModalPage(pageID string) {
+	t.pages.RemovePage(pageID)
+	t.markModalClosed()
+}
+
 // showInputDialog 显示输入对话框
 func (t *TUIApp) showInputDialog(title, defaultValue string, callback func(string)) {
+	t.showInputDialogWithID("input", title, defaultValue, callback)
+}
+
+// showInputDialogWithID 显示输入对话框（带自定义页面ID，避免冲突）
+func (t *TUIApp) showInputDialogWithID(pageID string, title, defaultValue string, callback func(string)) {
 	previousFocus := t.menuList
+	accent := ColorTag(ColorAccent)
+	alt := ColorTag(ColorAccentAlt)
 
 	inputField := tview.NewInputField().
 		SetText(defaultValue).
@@ -22,10 +43,10 @@ func (t *TUIApp) showInputDialog(title, defaultValue string, callback func(strin
 
 	titleText := tview.NewTextView().
 		SetDynamicColors(true).
-		SetText("[#FF00FF]✦[-] " + title).
+		SetText(fmt.Sprintf("%s✦%s %s%s%s", alt, resetTag, accent, title, resetTag)).
 		SetTextAlign(tview.AlignCenter)
 	titleText.SetBackgroundColor(ColorBgPanel)
-	titleText.SetTextColor(ColorNeonCyan)
+	titleText.SetTextColor(ColorAccent)
 
 	inputRow := tview.NewFlex().
 		AddItem(nil, 2, 0, false).
@@ -34,7 +55,7 @@ func (t *TUIApp) showInputDialog(title, defaultValue string, callback func(strin
 
 	hintText := tview.NewTextView().
 		SetDynamicColors(true).
-		SetText("[#00FFFF]Enter[-] 确认    [#FF00FF]Esc[-] 取消").
+		SetText(fmt.Sprintf("%sEnter%s 确认    %sEsc%s 取消", accent, resetTag, alt, resetTag)).
 		SetTextAlign(tview.AlignCenter)
 	hintText.SetBackgroundColor(ColorBgPanel)
 	hintText.SetTextColor(ColorTextDim)
@@ -47,14 +68,15 @@ func (t *TUIApp) showInputDialog(title, defaultValue string, callback func(strin
 		AddItem(hintText, 1, 0, false)
 
 	container.SetBorder(true).
-		SetBorderColor(ColorNeonCyan).
+		SetBorderColor(ColorBorderActive).
+		SetTitle(t.formatPanelTitle("✦", "输入")).
 		SetBackgroundColor(ColorBgPanel).
 		SetBorderPadding(1, 1, 2, 2)
 
 	inputField.SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyEnter {
 			value := inputField.GetText()
-			t.pages.RemovePage("input")
+			t.hideModalPage(pageID)
 			t.app.SetFocus(previousFocus)
 			t.app.ForceDraw()
 			callback(value)
@@ -63,7 +85,7 @@ func (t *TUIApp) showInputDialog(title, defaultValue string, callback func(strin
 
 	inputField.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyEscape {
-			t.pages.RemovePage("input")
+			t.hideModalPage(pageID)
 			t.app.SetFocus(previousFocus)
 			t.app.ForceDraw()
 			return nil
@@ -79,34 +101,99 @@ func (t *TUIApp) showInputDialog(title, defaultValue string, callback func(strin
 			AddItem(nil, 0, 1, false), 50, 0, true).
 		AddItem(nil, 0, 1, false)
 
-	t.pages.AddPage("input", modal, true, true)
+	t.showModalPage(pageID, modal)
 	t.app.SetFocus(inputField)
 }
 
 // showConfirmDialog 显示确认对话框
 func (t *TUIApp) showConfirmDialog(message string, callback func(bool)) {
+	t.showConfirmDialogWithID("confirm", message, callback)
+}
+
+// showConfirmDialogWithID 显示确认对话框（带自定义页面ID，避免冲突）
+func (t *TUIApp) showConfirmDialogWithID(pageID string, message string, callback func(bool)) {
 	previousFocus := t.menuList
+	warn := ColorTag(ColorWarning)
 
 	modal := tview.NewModal().
-		SetText("[#FFE900]⚠[-] " + message).
+		SetText(fmt.Sprintf("%s⚠%s %s", warn, resetTag, message)).
 		AddButtons([]string{"  确定  ", "  取消  "}).
 		SetBackgroundColor(ColorBgPanel).
 		SetTextColor(ColorTextBright).
-		SetButtonBackgroundColor(ColorNeonCyan).
+		SetButtonBackgroundColor(ColorAccent).
 		SetButtonTextColor(ColorBgDeep).
 		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-			t.pages.RemovePage("confirm")
+			t.hideModalPage(pageID)
 			t.app.SetFocus(previousFocus)
 			t.app.ForceDraw()
 			callback(buttonIndex == 0)
 		})
 
-	t.pages.AddPage("confirm", modal, true, true)
+	modal.SetTitle(t.formatPanelTitle("⚠", "确认"))
+	modal.SetBorder(true)
+	t.showModalPage(pageID, modal)
+}
+
+// showYesNoDialog 显示是/否对话框
+func (t *TUIApp) showYesNoDialog(message string, callback func(bool)) {
+	t.showYesNoDialogWithID("yesno", message, callback)
+}
+
+// showYesNoDialogWithID 显示是/否对话框（带自定义页面ID，避免冲突）
+func (t *TUIApp) showYesNoDialogWithID(pageID string, message string, callback func(bool)) {
+	previousFocus := t.menuList
+	warn := ColorTag(ColorWarning)
+
+	modal := tview.NewModal().
+		SetText(fmt.Sprintf("%s⚠%s %s", warn, resetTag, message)).
+		AddButtons([]string{"  是  ", "  否  "}).
+		SetBackgroundColor(ColorBgPanel).
+		SetTextColor(ColorTextBright).
+		SetButtonBackgroundColor(ColorAccent).
+		SetButtonTextColor(ColorBgDeep).
+		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			t.hideModalPage(pageID)
+			t.app.SetFocus(previousFocus)
+			t.app.ForceDraw()
+			callback(buttonIndex == 0)
+		})
+
+	modal.SetTitle(t.formatPanelTitle("⚠", "确认"))
+	modal.SetBorder(true)
+	t.showModalPage(pageID, modal)
+}
+
+// showChoiceDialog 显示双选项对话框（用于明确的两个选项）
+func (t *TUIApp) showChoiceDialog(pageID string, message string, leftButton string, rightButton string, callback func(bool)) {
+	previousFocus := t.menuList
+	warn := ColorTag(ColorWarning)
+
+	modal := tview.NewModal().
+		SetText(fmt.Sprintf("%s⚠%s %s", warn, resetTag, message)).
+		AddButtons([]string{"  " + leftButton + "  ", "  " + rightButton + "  "}).
+		SetBackgroundColor(ColorBgPanel).
+		SetTextColor(ColorTextBright).
+		SetButtonBackgroundColor(ColorAccent).
+		SetButtonTextColor(ColorBgDeep).
+		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			t.hideModalPage(pageID)
+			t.app.SetFocus(previousFocus)
+			t.app.ForceDraw()
+			// tview 的按钮索引：右边按钮 = 0，左边按钮 = 1
+			// 所以点击右边按钮时返回 true
+			callback(buttonIndex == 0)
+		})
+
+	modal.SetTitle(t.formatPanelTitle("⚠", "选择"))
+	modal.SetBorder(true)
+	t.showModalPage(pageID, modal)
 }
 
 // showInfoDialog 显示信息对话框
 func (t *TUIApp) showInfoDialog(title, content string) {
 	previousFocus := t.menuList
+	accent := ColorTag(ColorAccent)
+	alt := ColorTag(ColorAccentAlt)
 
 	textView := tview.NewTextView().
 		SetDynamicColors(true).
@@ -118,7 +205,7 @@ func (t *TUIApp) showInfoDialog(title, content string) {
 
 	hintText := tview.NewTextView().
 		SetDynamicColors(true).
-		SetText("[#00FFFF]↑↓[-] 滚动    [#FF00FF]Enter/Esc[-] 关闭").
+		SetText(fmt.Sprintf("%s↑↓%s 滚动    %sEnter/Esc%s 关闭", accent, resetTag, alt, resetTag)).
 		SetTextAlign(tview.AlignCenter)
 	hintText.SetBackgroundColor(ColorBgPanel)
 	hintText.SetTextColor(ColorTextDim)
@@ -128,16 +215,16 @@ func (t *TUIApp) showInfoDialog(title, content string) {
 		AddItem(hintText, 1, 0, false)
 
 	container.SetBorder(true).
-		SetTitle(" [#FF00FF]◈[-] " + title + " ").
+		SetTitle(fmt.Sprintf(" %s◈%s %s%s%s ", alt, resetTag, accent, title, resetTag)).
 		SetTitleAlign(tview.AlignCenter).
-		SetTitleColor(ColorNeonCyan).
-		SetBorderColor(ColorNeonCyan).
+		SetTitleColor(ColorAccent).
+		SetBorderColor(ColorBorderActive).
 		SetBackgroundColor(ColorBgPanel).
 		SetBorderPadding(0, 0, 1, 1)
 
 	textView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyEscape || event.Key() == tcell.KeyEnter {
-			t.pages.RemovePage("info")
+			t.hideModalPage("info")
 			t.app.SetFocus(previousFocus)
 			t.app.ForceDraw()
 			return nil
@@ -153,14 +240,14 @@ func (t *TUIApp) showInfoDialog(title, content string) {
 			AddItem(nil, 0, 1, false), 0, 2, true).
 		AddItem(nil, 0, 1, false)
 
-	t.pages.AddPage("info", modal, true, true)
+	t.showModalPage("info", modal)
 	t.app.SetFocus(textView)
 }
 
 // showLoadingDialog 显示加载动画对话框
 func (t *TUIApp) showLoadingDialog(message string) *Spinner {
 	spinner := NewSpinner(t.app)
-	spinner.SetText("[#00FFFF]"+message+"[-]", "")
+	spinner.SetText(ColorTag(ColorAccent)+message+resetTag, "")
 
 	container := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(nil, 0, 1, false).
@@ -168,7 +255,8 @@ func (t *TUIApp) showLoadingDialog(message string) *Spinner {
 		AddItem(nil, 0, 1, false)
 
 	container.SetBorder(true).
-		SetBorderColor(ColorNeonPink).
+		SetBorderColor(ColorBorderActive).
+		SetTitle(t.formatPanelTitle("⏳", "处理中")).
 		SetBackgroundColor(ColorBgPanel).
 		SetBorderPadding(1, 1, 2, 2)
 
@@ -180,7 +268,7 @@ func (t *TUIApp) showLoadingDialog(message string) *Spinner {
 			AddItem(nil, 0, 1, false), 40, 0, false).
 		AddItem(nil, 0, 1, false)
 
-	t.pages.AddPage("loading", modal, true, true)
+	t.showModalPage("loading", modal)
 	spinner.Start()
 
 	return spinner
@@ -191,6 +279,6 @@ func (t *TUIApp) hideLoadingDialog(spinner *Spinner) {
 	if spinner != nil {
 		spinner.Stop()
 	}
-	t.pages.RemovePage("loading")
+	t.hideModalPage("loading")
 	t.app.SetFocus(t.menuList)
 }

@@ -84,7 +84,7 @@ func (c *ControlClient) ServerStatus() (*ServerStatusResponse, error) {
 		return nil, err
 	}
 	if !resp.Success {
-		return nil, fmt.Errorf(resp.Error)
+		return nil, fmt.Errorf("%s", resp.Error)
 	}
 	var status ServerStatusResponse
 	if err := json.Unmarshal(resp.Data, &status); err != nil {
@@ -100,7 +100,7 @@ func (c *ControlClient) ServerClients() ([]ClientInfo, error) {
 		return nil, err
 	}
 	if !resp.Success {
-		return nil, fmt.Errorf(resp.Error)
+		return nil, fmt.Errorf("%s", resp.Error)
 	}
 	var result ClientListResponse
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
@@ -131,7 +131,7 @@ func (c *ControlClient) ClientStatus() (*VPNClientStatusResponse, error) {
 		return nil, err
 	}
 	if !resp.Success {
-		return nil, fmt.Errorf(resp.Error)
+		return nil, fmt.Errorf("%s", resp.Error)
 	}
 	var status VPNClientStatusResponse
 	if err := json.Unmarshal(resp.Data, &status); err != nil {
@@ -152,7 +152,7 @@ func (c *ControlClient) CertList() (*CertListResponse, error) {
 		return nil, err
 	}
 	if !resp.Success {
-		return nil, fmt.Errorf(resp.Error)
+		return nil, fmt.Errorf("%s", resp.Error)
 	}
 	var result CertListResponse
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
@@ -168,7 +168,7 @@ func (c *ControlClient) CertGenCSR(clientName string) (*GenerateCSRResponse, err
 		return nil, err
 	}
 	if !resp.Success {
-		return nil, fmt.Errorf(resp.Error)
+		return nil, fmt.Errorf("%s", resp.Error)
 	}
 	var result GenerateCSRResponse
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
@@ -192,7 +192,7 @@ func (c *ControlClient) TokenGenerate(clientName string, duration int) (*Generat
 		return nil, err
 	}
 	if !resp.Success {
-		return nil, fmt.Errorf(resp.Error)
+		return nil, fmt.Errorf("%s", resp.Error)
 	}
 	var result GenerateTokenResponse
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
@@ -208,7 +208,7 @@ func (c *ControlClient) TokenList() ([]TokenInfo, error) {
 		return nil, err
 	}
 	if !resp.Success {
-		return nil, fmt.Errorf(resp.Error)
+		return nil, fmt.Errorf("%s", resp.Error)
 	}
 	var result TokenListResponse
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
@@ -234,7 +234,7 @@ func (c *ControlClient) ConfigGet() (*VPNConfig, error) {
 		return nil, err
 	}
 	if !resp.Success {
-		return nil, fmt.Errorf(resp.Error)
+		return nil, fmt.Errorf("%s", resp.Error)
 	}
 	var result ConfigResponse
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
@@ -275,7 +275,7 @@ func (c *ControlClient) LogFetch(since uint64, limit int) (*LogFetchResponse, er
 		return nil, err
 	}
 	if !resp.Success {
-		return nil, fmt.Errorf(resp.Error)
+		return nil, fmt.Errorf("%s", resp.Error)
 	}
 	var result LogFetchResponse
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
