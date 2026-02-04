@@ -169,7 +169,7 @@ func (t *TUIApp) setupUI() {
 	t.menuList = tview.NewList().
 		SetHighlightFullLine(true).
 		SetSelectedBackgroundColor(ColorBgSelect).
-		SetSelectedTextColor(ColorTextPrimary).
+		SetSelectedTextColor(tcell.NewRGBColor(0, 0, 0)).  // 黑色文字，确保在明亮背景上清晰可见
 		SetMainTextColor(ColorTextNormal).
 		SetSecondaryTextColor(ColorTextDim).
 		SetShortcutColor(ColorNeonPink)
@@ -402,7 +402,7 @@ func (t *TUIApp) applyThemeToViews() {
 	t.menuList.SetMainTextColor(ColorTextNormal)
 	t.menuList.SetSecondaryTextColor(ColorTextDim)
 	t.menuList.SetSelectedBackgroundColor(ColorBgSelect)
-	t.menuList.SetSelectedTextColor(ColorTextPrimary)
+	t.menuList.SetSelectedTextColor(tcell.NewRGBColor(0, 0, 0))  // 黑色文字，确保在明亮背景上清晰可见
 	t.menuList.SetShortcutColor(ColorAccentAlt)
 	t.menuList.SetBorderColor(ColorBorder)
 	t.menuList.SetTitleColor(ColorAccent)
