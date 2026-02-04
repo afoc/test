@@ -930,7 +930,7 @@ func handleServerWizard(t *TUIApp) {
 
 	// 步骤 1: 配置监听端口
 	t.showInputDialogWithID("wizard-port",
-		"步骤 1/4: VPN监听端口\n\n推荐: 8080 | 范围: 1-65535",
+		"步骤 1/6: VPN监听端口\n\n推荐: 8080 | 范围: 1-65535",
 		fmt.Sprintf("%d", cfg.ServerPort),
 		func(portStr string) {
 			port, err := strconv.Atoi(portStr)
@@ -948,7 +948,7 @@ func handleServerWizard(t *TUIApp) {
 
 			// 步骤 2: 配置VPN网段
 			t.showInputDialogWithID("wizard-network",
-				"步骤 2/4: VPN网段 (CIDR格式)\n\n推荐: 10.8.0.0/24\n示例: 192.168.100.0/24",
+				"步骤 2/6: VPN网段 (CIDR格式)\n\n推荐: 10.8.0.0/24\n示例: 192.168.100.0/24",
 				cfg.Network,
 				func(network string) {
 					// 验证网段格式
@@ -1357,7 +1357,7 @@ func checkClientCertAndContinue(t *TUIApp, serverAddr string, serverPort int) {
 func startClientCertApplication(t *TUIApp, serverAddr string, serverPort int) {
 	// 询问客户端名称（用于CSR）
 	t.showInputDialogWithID("client-wizard-csr-name",
-		"输入客户端名称\n\n"+
+		"步骤 3.5/5: 输入客户端名称\n\n"+
 			"用于生成证书签名请求(CSR)\n\n"+
 			"示例: my-laptop, 张三-手机",
 		"client",
