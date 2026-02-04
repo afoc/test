@@ -1245,7 +1245,7 @@ func handleClientWizard(t *TUIApp) {
 
 	// 步骤 1: 配置服务器地址
 	t.showInputDialogWithID("client-wizard-address",
-		"步骤 1/5: VPN服务器地址\n\n"+
+		"步骤 1/6: VPN服务器地址\n\n"+
 			"输入服务端的IP地址或域名\n\n"+
 			"示例:\n"+
 			"  • 192.168.1.100 (局域网IP)\n"+
@@ -1267,7 +1267,7 @@ func handleClientWizard(t *TUIApp) {
 
 			// 步骤 2: 配置服务器端口
 			t.showInputDialogWithID("client-wizard-port",
-				"步骤 2/5: VPN服务器端口\n\n"+
+				"步骤 2/6: VPN服务器端口\n\n"+
 					"服务端配置的监听端口\n\n"+
 					"默认: 8080 | 范围: 1-65535",
 				fmt.Sprintf("%d", cfg.ServerPort),
@@ -1312,8 +1312,9 @@ func checkClientCertAndContinue(t *TUIApp, serverAddr string, serverPort int) {
 		t.addLog("[green]✓ 客户端证书已就绪")
 		t.addLog("")
 		t.showChoiceDialog("client-wizard-connect",
-			"步骤 5/5: 连接VPN\n\n"+
-				"证书已就绪，可以连接到VPN服务器\n\n"+
+			"步骤 3/6: 连接VPN\n\n"+
+				"[#39FF14]证书已就绪（跳过步骤4-5）[-]\n\n"+
+				"可以连接到VPN服务器\n\n"+
 				fmt.Sprintf("服务器: [#39FF14]%s:%d[-]\n\n", serverAddr, serverPort)+
 				"是否立即连接?",
 			"稍后连接", "立即连接",
@@ -1332,7 +1333,7 @@ func checkClientCertAndContinue(t *TUIApp, serverAddr string, serverPort int) {
 		t.addLog("")
 
 		t.showChoiceDialog("client-wizard-cert-choice",
-			"步骤 3/5: 证书申请\n\n"+
+			"步骤 3/6: 证书申请\n\n"+
 				"[#FFE900]客户端需要证书才能连接VPN[-]\n\n"+
 				"申请步骤:\n"+
 				"  1. 生成证书签名请求(CSR)\n"+
@@ -1357,7 +1358,7 @@ func checkClientCertAndContinue(t *TUIApp, serverAddr string, serverPort int) {
 func startClientCertApplication(t *TUIApp, serverAddr string, serverPort int) {
 	// 询问客户端名称（用于CSR）
 	t.showInputDialogWithID("client-wizard-csr-name",
-		"步骤 3.5/5: 输入客户端名称\n\n"+
+		"步骤 4/6: 输入客户端名称\n\n"+
 			"用于生成证书签名请求(CSR)\n\n"+
 			"示例: my-laptop, 张三-手机",
 		"client",
@@ -1375,9 +1376,9 @@ func startClientCertApplication(t *TUIApp, serverAddr string, serverPort int) {
 			}
 			t.addLog("[green]✓ CSR已生成: %s", csrResp.CSRFile)
 
-			// 步骤 4: 输入Token
+			// 步骤 5: 输入Token
 			t.showInputDialogWithID("client-wizard-token",
-				"步骤 4/5: 输入Token\n\n"+
+				"步骤 5/6: 输入Token\n\n"+
 					"[#FFE900]请输入服务端管理员提供的Token[-]\n\n"+
 					"Token格式:\n"+
 					"  完整格式: ID:KEY\n"+
@@ -1436,9 +1437,9 @@ func startClientCertApplication(t *TUIApp, serverAddr string, serverPort int) {
 					t.addLog("[green]✓ 证书已保存到 ./certs 目录")
 					t.addLog("")
 
-					// 步骤 5: 连接VPN
+					// 步骤 6: 连接VPN
 					t.showChoiceDialog("client-wizard-final-connect",
-						"步骤 5/5: 连接VPN\n\n"+
+						"步骤 6/6: 连接VPN\n\n"+
 							"[#39FF14]证书申请成功![-]\n\n"+
 							fmt.Sprintf("服务器: [#39FF14]%s:%d[-]\n\n", serverAddr, serverPort)+
 							"是否立即连接到VPN服务器?",
