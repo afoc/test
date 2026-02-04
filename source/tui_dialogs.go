@@ -34,9 +34,9 @@ func (t *TUIApp) showInputDialogWithID(pageID string, title, defaultValue string
 		SetText(defaultValue).
 		SetFieldWidth(35).
 		SetFieldBackgroundColor(ColorBgSelect).
-		SetFieldTextColor(ColorTextBright).
+		SetFieldTextColor(tcell.NewRGBColor(0, 0, 0)).  // 黑色文字，确保在明亮背景上清晰可见
 		SetPlaceholder("请输入...").
-		SetPlaceholderTextColor(ColorTextDim).
+		SetPlaceholderTextColor(tcell.NewRGBColor(60, 60, 60)).  // 深灰色占位符
 		SetLabelColor(ColorNeonCyan)
 
 	container := tview.NewFlex().SetDirection(tview.FlexRow)
